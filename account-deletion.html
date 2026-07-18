@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hapus Akun — Block Nova</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px 18px 60px; background: #0b0420; color: rgba(255,255,255,.85);
+    font-family: -apple-system, system-ui, "Segoe UI", sans-serif; line-height: 1.6;
+  }
+  .wrap { max-width: 420px; margin: 0 auto; }
+  a { color: #36e8c9; }
+  h1 { font-size: 22px; color: #fff; margin-bottom: 4px; }
+  p { font-size: 14px; color: rgba(255,255,255,.75); }
+  .back { display: inline-block; margin-bottom: 18px; font-size: 13px; text-decoration: none; }
+  .card { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 16px; padding: 20px; margin-top: 16px; }
+  label { display: block; font-size: 12.5px; color: rgba(255,255,255,.6); margin: 12px 0 4px; }
+  input {
+    width: 100%; padding: 11px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.15);
+    background: rgba(255,255,255,.04); color: #fff; font-size: 14px;
+  }
+  input:focus { outline: none; border-color: #36e8c9; }
+  button {
+    width: 100%; margin-top: 18px; padding: 13px; border: none; border-radius: 12px;
+    font-size: 14.5px; font-weight: 700; cursor: pointer;
+  }
+  #btnDelete { background: #ff5e62; color: #fff; }
+  #btnDelete:disabled { opacity: .5; cursor: default; }
+  .msg { font-size: 13px; margin-top: 12px; min-height: 18px; }
+  .msg.err { color: #ff8a8d; }
+  .msg.ok { color: #36e8c9; }
+  .guestNote { background: rgba(255,193,7,.1); border: 1px solid rgba(255,193,7,.3);
+    border-radius: 12px; padding: 14px 16px; margin-top: 16px; font-size: 13px; color: #ffd766; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="index.html">← Kembali ke daftar dokumen</a>
+  <h1>⚠️ Hapus Akun Block Nova</h1>
+  <p>Masukkan email &amp; password akun kamu untuk menghapus akun beserta seluruh
+  data terkait (nickname, skor terbaik, posisi leaderboard) secara permanen.</p>
+
+  <div class="card" id="formCard">
+    <label for="delEmail">Email</label>
+    <input type="email" id="delEmail" autocomplete="username" placeholder="email@contoh.com">
+    <label for="delPassword">Password</label>
+    <input type="password" id="delPassword" autocomplete="current-password" placeholder="Password akunmu">
+    <button id="btnDelete">Masuk &amp; Hapus Akun Saya</button>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="guestNote">
+    <strong>Main sebagai Tamu (belum daftar email)?</strong><br>
+    Akun tamu tidak punya email/password, jadi tidak bisa dihapus dari halaman
+    web ini. Buka game di perangkatmu → menu utama → profil kamu → tombol
+    <em>"Hapus Akun &amp; Data"</em>.
+  </div>
+
+  <p style="margin-top:24px;font-size:12.5px;color:rgba(255,255,255,.4);">
+    Lihat juga <a href="privacy-policy.html">Kebijakan Privasi</a> kami.
+  </p>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script>
+(function(){
+  'use strict';
+  // Konfigurasi PUBLIK sama persis dengan yang dipakai game Block Nova (apiKey
+  // publik aman di klien). Halaman ini sengaja berdiri sendiri (repo terpisah,
+  // dihosting via GitHub Pages) supaya jadi "web link resource" yang bisa
+  // diakses tanpa install game sama sekali, sesuai ketentuan Google Play soal
+  // account deletion. Firebase SDK dimuat dari CDN resmi (bukan vendor lokal
+  // seperti di WebView game) karena halaman ini selalu online by definisi.
+  const FB_CFG = {
+    apiKey:            'AIzaSyBhIHqlB8ODqFe1N1FghoDe_lNDZgEt34Y',
+    authDomain:        'block-nova-af75e.firebaseapp.com',
+    projectId:         'block-nova-af75e',
+    storageBucket:     'block-nova-af75e.firebasestorage.app',
+    messagingSenderId: '111308902839',
+    appId:             '1:111308902839:web:aeeb1c0b652bab7db49832',
+    measurementId:     'G-K1D5ETKH3R'
+  };
+
+  let auth = null, db = null;
+  try {
+    firebase.initializeApp(FB_CFG);
+    auth = firebase.auth();
+    db = firebase.firestore();
+  } catch (e) {
+    console.warn('Firebase init gagal:', e);
+  }
+
+  const btn = document.getElementById('btnDelete');
+  const msgEl = document.getElementById('msg');
+
+  function setMsg(text, kind) {
+    msgEl.textContent = text || '';
+    msgEl.className = 'msg' + (kind ? ' ' + kind : '');
+  }
+
+  // Bungkus timeout (pola sama dengan fbTimeout() di index.html game) - tanpa
+  // ini, koneksi lambat/gagal bisa bikin tombol macet permanen di
+  // "Menghapus..." tanpa pesan apa pun ke pengguna.
+  function withTimeout(promise, ms) {
+    ms = ms || 15000;
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => setTimeout(() => reject({ code: 'timeout' }), ms)),
+    ]);
+  }
+
+  btn.onclick = async function () {
+    const email = document.getElementById('delEmail').value.trim();
+    const password = document.getElementById('delPassword').value;
+    if (!email || !password) { setMsg('Isi email dan password dulu.', 'err'); return; }
+    if (!auth) { setMsg('Layanan belum siap, coba muat ulang halaman.', 'err'); return; }
+
+    btn.disabled = true; btn.textContent = 'Menghapus...';
+    setMsg('');
+    try {
+      const cred = await withTimeout(auth.signInWithEmailAndPassword(email, password));
+      const user = cred.user;
+      const uid = user.uid;
+
+      // Ambil nickname dari profil (dipakai buat hapus reservasi di
+      // collection nicknames) SEBELUM akun Auth-nya dihapus.
+      let nick = null;
+      try {
+        const snap = await withTimeout(db.collection('users').doc(uid).get());
+        if (snap.exists) nick = snap.data().nickname;
+      } catch (e) {}
+
+      await withTimeout(user.delete());
+
+      // Akun Auth sudah terhapus - bersihkan Firestore terkait (best-effort,
+      // sama seperti deleteAccount() di dalam game).
+      try { await withTimeout(db.collection('users').doc(uid).delete()); } catch (e) {}
+      try { await withTimeout(db.collection('leaderboard_global').doc(uid).delete()); } catch (e) {}
+      if (nick) {
+        try { await withTimeout(db.collection('nicknames').doc(nick.trim().toLowerCase()).delete()); } catch (e) {}
+      }
+
+      setMsg('Akun kamu berhasil dihapus. Terima kasih sudah bermain Block Nova.', 'ok');
+      document.getElementById('formCard').style.display = 'none';
+    } catch (e) {
+      const map = {
+        'auth/wrong-password': 'Password salah.',
+        'auth/user-not-found': 'Email tidak terdaftar.',
+        'auth/invalid-email': 'Format email tidak valid.',
+        'auth/too-many-requests': 'Terlalu banyak percobaan. Coba lagi beberapa saat.',
+        'auth/requires-recent-login': 'Sesi login baru saja dibuat, coba ulangi sekali lagi.',
+        'timeout': 'Koneksi lambat atau bermasalah. Coba lagi.',
+        'auth/network-request-failed': 'Tidak ada koneksi internet.',
+      };
+      setMsg(map[e.code] || 'Gagal menghapus akun. Periksa email/password lalu coba lagi.', 'err');
+      btn.disabled = false; btn.textContent = 'Masuk & Hapus Akun Saya';
+    }
+  };
+})();
+</script>
+</body>
+</html>
